@@ -35,7 +35,8 @@ var split_der = require("node-opcua-crypto").crypto_explore_certificate.split_de
  * A sever end point is listening to one port
  *
  * @param options {Object}
- * @param options.port                                  {Number} the tcp port
+ * @param options.protocol                              {String} the endpoint protocol
+ * @param options.port                                  {Number} the endpoint port
  * @param options.certificateChain                      {Buffer} the DER certificate chain
  * @param options.privateKey                            {String} PEM string of the private key
  * @param [options.defaultSecureTokenLifetime=600000]   {Number} the default secure token lifetime
@@ -68,6 +69,8 @@ function OPCUAServerEndPoint(options) {
 
     self.port = parseInt(options.port, 10);
     assert(_.isNumber(self.port));
+
+    self.protocol = options.protocol || "opc.tcp";
 
     self._certificateChain = options.certificateChain;
     self._privateKey = options.privateKey;
@@ -116,26 +119,82 @@ OPCUAServerEndPoint.prototype._setup_server = function () {
     var self = this;
 
     assert(self._server === null);
-    self._server = net.createServer(self._on_client_connection.bind(self));
 
-    //xx console.log(" Server with max connections ", self.maxConnections);
-    self._server.maxConnections = self.maxConnections + 1; // plus one extra
+    switch (self.protocol) {
+        case "opc.tcp":
+            self._server = net.createServer(self._on_client_connection.bind(self));
 
-    self._listen_callback = null;
-    self._server.on("connection", function (socket) {
+            //xx console.log(" Server with max connections ", self.maxConnections);
+            self._server.maxConnections = self.maxConnections + 1; // plus one extra
+        
+            self._listen_callback = null;
+            
+            self._server.on("connection", function (socket) {
 
-        // istanbul ignore next
-        if (doDebug) {
-            self._dump_statistics();
-            debugLog("server connected  with : " + socket.remoteAddress + ":" + socket.remotePort);
-        }
+                // istanbul ignore next
+                if (doDebug) {
+                    self._dump_statistics();
+                    debugLog("TCP server connected  with : " + socket.remoteAddress + ":" + socket.remotePort);
+                }
+        
+            }).on("close", function () {
+                debugLog("TCP server closed : all connections have ended");
+            }).on("error", function (err) {
+                // this could be because the port is already in use
+                debugLog("TCP server error: ".red.bold, err.message);
+            });
 
-    }).on("close", function () {
-        debugLog("server closed : all connections have ended");
-    }).on("error", function (err) {
-        // this could be because the port is already in use
-        debugLog("server error: ".red.bold, err.message);
-    });
+            break;
+        case "opc.wss":
+            self._server = new WebSocket.Server({ port: self.port});
+
+            //xx console.log(" Server with max connections ", self.maxConnections);
+            self._server.maxConnections = self.maxConnections + 1; // plus one extra
+        
+            self._listen_callback = null;
+
+            self._server.on("connection", function (socket, req) {
+
+                // istanbul ignore next
+                if (doDebug) {
+                    self._dump_statistics();
+                    debugLog("WS server connected: "+req.connection.remoteAddress);
+                }
+
+                ws.isAlive = true;
+                ws.on('pong', heartbeat);
+        
+            }).on("close", function () {
+                debugLog("WS server closed : all connections have ended");
+            }).on("error", function (err) {
+                // this could be because the port is already in use
+                debugLog("WS server error: ".red.bold, err.message);
+            });
+
+            //timeout with heartbeat
+            function noop() {}
+
+            function heartbeat() {
+            this.isAlive = true;
+            }
+            
+            const interval = setInterval(function ping() {
+                wss.clients.forEach(function each(ws) {
+                if (ws.isAlive === false) return ws.terminate();
+            
+                ws.isAlive = false;
+                ws.ping(noop);
+                });
+            }, self.timeout);
+
+            break;
+        case "fake":
+        case "http":
+        case "https":
+        default:
+            throw new Error("this transport protocol is currently not supported :" + self.protocol);
+            return null;
+    }    
 };
 
 function dumpChannelInfo(channels) {
@@ -219,12 +278,28 @@ OPCUAServerEndPoint.prototype._on_client_connection = function (socket) {
     // a client is attempting a connection on the socket
     var self = this;
 
-    socket.setNoDelay(true);
+    if(self.protocol === "opc.tcp"){
+        socket.setNoDelay(true);
+    }
 
     debugLog("OPCUAServerEndPoint#_on_client_connection", self._started);
     if (!self._started) {
         debugLog("OPCUAServerEndPoint#_on_client_connection SERVER END POINT IS PROBABLY SHUTTING DOWN !!! - Connection is refused".bgWhite.cyan);
-        socket.end();
+        
+        switch (self.protocol) {
+            case "opc.tcp":
+                socket.end();
+            break;
+            case "opc.wss":
+                socket.terminate();
+            break;
+            case "fake":
+            case "http":
+            case "https":
+            default:
+                throw new Error("this transport protocol is currently not supported :" + self.protocol);
+                return;
+        }   
         return;
     }
 
@@ -240,7 +315,20 @@ OPCUAServerEndPoint.prototype._on_client_connection = function (socket) {
         debugLog(" nbConnections ", nbConnections, " self._server.maxConnections", self._server.maxConnections, self.maxConnections);
         if (nbConnections >= self.maxConnections) {
             debugLog("OPCUAServerEndPoint#_on_client_connection The maximum number of connection has been reached - Connection is refused".bgWhite.bold.cyan);
-            socket.end();
+            switch (self.protocol) {
+                case "opc.tcp":
+                    socket.end();
+                break;
+                case "opc.wss":
+                    socket.terminate();
+                break;
+                case "fake":
+                case "http":
+                case "https":
+                default:
+                    throw new Error("this transport protocol is currently not supported :" + self.protocol);
+                    return;
+            }   
             return;
         }
 
@@ -255,7 +343,20 @@ OPCUAServerEndPoint.prototype._on_client_connection = function (socket) {
 
         channel.init(socket, function (err) {
             if (err) {
-                socket.end();
+                switch (self.protocol) {
+                    case "opc.tcp":
+                        socket.end();
+                    break;
+                    case "opc.wss":
+                        socket.terminate();
+                    break;
+                    case "fake":
+                    case "http":
+                    case "https":
+                    default:
+                        throw new Error("this transport protocol is currently not supported :" + self.protocol);
+                        return;
+                }   
             } else {
                 self._registerChannel(channel);
                 debugLog("server receiving a client connection");
@@ -313,6 +414,7 @@ var default_transportProfileUri = "http://opcfoundation.org/UA-Profile/Transport
 /**
  * @method _makeEndpointDescription
  * @param options.port
+ * @param options.protocol
  * @param options.serverCertificate
  * @param options.securityMode
  * @param options.securityPolicy
@@ -340,6 +442,7 @@ function _makeEndpointDescription(options) {
     assert(_.isObject(options.server));
     assert(options.hostname && (typeof options.hostname === "string"));
     assert(_.isBoolean(options.restricted));
+    assert(options.hasOwnProperty("protocol"));
 
     options.securityLevel = (options.securityLevel === undefined) ? 3 : options.securityLevel;
     assert(_.isFinite(options.securityLevel), "expecting a valid securityLevel");
@@ -402,7 +505,21 @@ function _makeEndpointDescription(options) {
         });
     }
 
-    var endpointUrl = "opc.tcp://" + options.hostname + ":" + path.join("" + options.port, resourcePath).replace(/\\/g, "/");
+    switch (options.protocol) {
+        case "opc.tcp":
+            var endpointUrl = "opc.tcp://" + options.hostname + ":" + path.join("" + options.port, resourcePath).replace(/\\/g, "/");
+        break;
+        case "opc.wss":
+            var endpointUrl = "opc.wss://" + options.hostname + ":" + path.join("" + options.port, resourcePath).replace(/\\/g, "/");
+        break;
+        case "fake":
+        case "http":
+        case "https":
+        default:
+            throw new Error("this transport protocol is currently not supported :" + options.protocol);
+            return;
+    }   
+    
     // return the endpoint object
     var endpoint = new EndpointDescription({
 
@@ -484,6 +601,7 @@ OPCUAServerEndPoint.prototype.addEndpointDescription = function (securityMode, s
 
     self._endpoints.push(_makeEndpointDescription({
         port: port,
+        protocol: self.protocol,
         server: self.serverInfo,
         serverCertificateChain: self.getCertificateChain(),
         securityMode: securityMode,
@@ -670,8 +788,22 @@ OPCUAServerEndPoint.prototype.killClientSockets = function (callback) {
     var chnls = _.values(this._channels);
     chnls.forEach(function(channel){
         if (channel._transport && channel._transport._socket) {
-            channel._transport._socket.close();
-            channel._transport._socket.destroy();
+            switch (self.protocol) {
+                case "opc.tcp":
+                channel._transport._socket.close();
+                channel._transport._socket.destroy();
+                break;
+                case "opc.wss":
+                channel._transport._socket.terminate();
+                break;
+                case "fake":
+                case "http":
+                case "https":
+                default:
+                    throw new Error("this transport protocol is currently not supported :" + self.protocol);
+                    return;
+            }  
+            
             channel._transport._socket.emit("error", new Error("EPIPE"));
         }
 

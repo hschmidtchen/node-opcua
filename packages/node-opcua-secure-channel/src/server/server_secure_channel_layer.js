@@ -19,6 +19,7 @@ var SecurityPolicy = securityPolicy_m.SecurityPolicy;
 
 
 var ServerTCP_transport = require("node-opcua-transport").ServerTCP_transport;
+var ServerWSS_transport = require("node-opcua-transport").ServerWSS_transport;
 
 var StatusCode = require("node-opcua-status-code").StatusCode;
 var StatusCodes = require("node-opcua-status-code").StatusCodes;
@@ -332,7 +333,21 @@ ServerSecureChannelLayer.prototype.init = function (socket, callback) {
 
     var self = this;
 
-    self.transport = new ServerTCP_transport();
+    switch (self.parent.protocol) {
+        case "opc.tcp":
+            self.transport = new ServerTCP_transport();
+        break;
+        case "opc.wss":
+            self.transport = new ServerWSS_transport();
+        break;
+        case "fake":
+        case "http":
+        case "https":
+        default:
+            throw new Error("this transport protocol is currently not supported :" + self.parent.protocol);
+            return;
+    }   
+    
     self.transport.timeout = self.timeout;
 
     self.transport.init(socket, function (err) {
@@ -364,8 +379,22 @@ ServerSecureChannelLayer.prototype.init = function (socket, callback) {
 
 ServerSecureChannelLayer.prototype._rememberClientAddressAndPort = function() {
     if (this.transport._socket) {
-        this._remoteAddress = this.transport._socket.remoteAddress;
-        this._remotePort = this.transport._socket.remotePort;
+        switch (self.parent.protocol) {
+            case "opc.tcp":
+                this._remoteAddress = this.transport._socket.remoteAddress;
+                this._remotePort = this.transport._socket.remotePort;
+            break;
+            case "opc.wss":
+            throw new Error("Need to add WSS socket info in server_secure_channel_layer!");
+            break;
+            case "fake":
+            case "http":
+            case "https":
+            default:
+                throw new Error("this transport protocol is currently not supported :" + self.parent.protocol);
+                return;
+        }  
+        
     }
 };
 

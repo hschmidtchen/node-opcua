@@ -134,6 +134,8 @@ var OPCUABaseServer = require("./base_server").OPCUABaseServer;
 var OPCUAClientBase = require("node-opcua-client").OPCUAClientBase;
 var exploreCertificate = require("node-opcua-crypto").crypto_explore_certificate.exploreCertificate;
 
+// for endpoint type
+var parseEndpointUrl = require("../node-opcua-transports/tools").parseEndpointUrl;
 
 var Factory = function Factory(engine) {
     assert(_.isObject(engine));
@@ -178,7 +180,7 @@ var default_build_info = {
  * @param [options.defaultSecureTokenLifetime = 60000] {Number} the default secure token life time in ms.
  * @param [options.timeout=10000] {Number}              the HEL/ACK transaction timeout in ms. Use a large value
  *                                                      ( i.e 15000 ms) for slow connections or embedded devices.
- * @param [options.port= 26543] {Number}                the TCP port to listen to.
+ * @param [options.port= 26543] {Number}                the server port to listen to.
  * @param [options.maxAllowedSessionNumber = 10 ]       the maximum number of concurrent sessions allowed.
  *
  * @param [options.nodeset_filename]{Array<String>|String} the nodeset.xml files to load
@@ -248,8 +250,11 @@ function OPCUAServer(options) {
 
     //xx console.log(" maxConnectionsPerEndpoint = ",self.maxConnectionsPerEndpoint);
 
-    // add the tcp/ip endpoint with no security
+    var protocol = options.protocol || "opc.tcp";
+
+    // add the endpoint with no security
     var endPoint = new OPCUAServerEndPoint({
+        protocol: protocol,
         port: port,
         defaultSecureTokenLifetime: options.defaultSecureTokenLifetime || 600000,
         timeout: options.timeout || 10000,
@@ -296,6 +301,57 @@ function OPCUAServer(options) {
         };
     }
 }
+
+// method to add an additional endpoint to the OPCUA Server
+OPCUAServer.prototype.addEndPoint = function(){
+    var self = this;
+    var options = self.options;
+
+    // create a socket based on Url
+    var ep = parseEndpointUrl(endpointUrl);
+    var port = ep.port;
+    var hostname = ep.hostname;
+    var protocol = ep.protocol;
+
+    // add the endpoint with no security
+    var endPoint = new OPCUAServerEndPoint({
+        protocol: protocol,
+        port: port,
+        defaultSecureTokenLifetime: options.defaultSecureTokenLifetime || 600000,
+        timeout: options.timeout || 10000,
+        certificateChain: self.getCertificateChain(),
+        privateKey: self.getPrivateKey(),
+        objectFactory: self.objectFactory,
+        serverInfo: self.serverInfo,
+        maxConnections: self.maxConnectionsPerEndpoint
+    });
+
+    endPoint.addStandardEndpointDescriptions({
+        securityPolicies: options.securityPolicies,
+        securityModes: options.securityModes,
+        allowAnonymous: !!options.allowAnonymous,
+        disableDiscovery: !!options.disableDiscovery,
+        resourcePath: options.resourcePath || "",
+        hostname: options.alternateHostname
+    });
+
+    self.endpoints.push(endPoint);
+
+    endPoint.on("message", function (message, channel) {
+        self.on_request(message, channel);
+    });
+
+    endPoint.on("error", function (err) {
+        console.log("OPCUAServer endpoint error", err);
+
+        // set serverState to ServerState.Failed;
+        self.engine.setServerState(ServerState.Failed);
+
+        self.shutdown(function () {
+        });
+    });
+};
+
 
 util.inherits(OPCUAServer, OPCUABaseServer);
 
