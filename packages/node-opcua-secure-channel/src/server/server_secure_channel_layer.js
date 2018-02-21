@@ -378,15 +378,15 @@ ServerSecureChannelLayer.prototype.init = function (socket, callback) {
 };
 
 ServerSecureChannelLayer.prototype._rememberClientAddressAndPort = function() {
+    var self = this;
     if (this.transport._socket) {
         switch (self.parent.protocol) {
             case "opc.tcp":
                 this._remoteAddress = this.transport._socket.remoteAddress;
                 this._remotePort = this.transport._socket.remotePort;
-            break;
+                break;
             case "opc.wss":
-            throw new Error("Need to add WSS socket info in server_secure_channel_layer!");
-            break;
+                break;
             case "fake":
             case "http":
             case "https":

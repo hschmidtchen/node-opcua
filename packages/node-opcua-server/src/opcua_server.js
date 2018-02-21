@@ -135,7 +135,7 @@ var OPCUAClientBase = require("node-opcua-client").OPCUAClientBase;
 var exploreCertificate = require("node-opcua-crypto").crypto_explore_certificate.exploreCertificate;
 
 // for endpoint type
-var parseEndpointUrl = require("../node-opcua-transports/tools").parseEndpointUrl;
+var parseEndpointUrl = require("../../node-opcua-transport/src/tools").parseEndpointUrl;
 
 var Factory = function Factory(engine) {
     assert(_.isObject(engine));
@@ -181,6 +181,7 @@ var default_build_info = {
  * @param [options.timeout=10000] {Number}              the HEL/ACK transaction timeout in ms. Use a large value
  *                                                      ( i.e 15000 ms) for slow connections or embedded devices.
  * @param [options.port= 26543] {Number}                the server port to listen to.
+ * @param [options.protocol= "tcp.ip"] {String}         the server transport protocol
  * @param [options.maxAllowedSessionNumber = 10 ]       the maximum number of concurrent sessions allowed.
  *
  * @param [options.nodeset_filename]{Array<String>|String} the nodeset.xml files to load
@@ -2750,12 +2751,9 @@ OPCUAServer.prototype._registerServer = function (discovery_server_endpointUrl, 
     async.series([
 
         function (callback) {
-
             client.connect(discovery_server_endpointUrl, callback);
-
         },
         function (callback) {
-
             client.getEndpointsRequest(function (err, endpoints) {
                 if (!err) {
 
@@ -2776,7 +2774,7 @@ OPCUAServer.prototype._registerServer = function (discovery_server_endpointUrl, 
         function (callback) {
 
             //xx var discoveryServerCertificate = split_der(discoveryServerCertificateChain)[0];
-
+           
             var options = {
                 securityMode: MessageSecurityMode.SIGN,
                 securityPolicy: SecurityPolicy.Basic128Rsa15,
@@ -2801,7 +2799,6 @@ OPCUAServer.prototype._registerServer = function (discovery_server_endpointUrl, 
         },
 
         function (callback) {
-
             var discoveryUrls = self.getDiscoveryUrls();
 
             var request = new RegisterServerRequest({

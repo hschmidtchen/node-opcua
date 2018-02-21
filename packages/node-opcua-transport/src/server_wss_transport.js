@@ -59,7 +59,7 @@ ServerWSS_transport.prototype._abortWithError = function (statusCode, extraError
 
         debugLog(" Server aborting because ".red + statusCode.name.cyan);
         debugLog(" extraErrorDescription   ".red + extraErrorDescription.cyan);
-        var errorResponse = new WSSErrorMessage({statusCode: statusCode, reason: statusCode.description});
+        var errorResponse = new TCPErrorMessage({statusCode: statusCode, reason: statusCode.description});
         var messageChunk = packTcpMessage("ERR", errorResponse);
 
         self.write(messageChunk);
@@ -130,7 +130,7 @@ ServerWSS_transport.prototype._send_ACK_response = function (helloMessage) {
 };
 
 ServerWSS_transport.prototype._install_HEL_message_receiver = function (callback) {
-
+    debugLog("HEL_message_receiver installed!");
     var self = this;
 
     self._install_one_time_message_receiver(function (err, data) {
@@ -139,6 +139,7 @@ ServerWSS_transport.prototype._install_HEL_message_receiver = function (callback
             self._abortWithError(StatusCodes.BadConnectionRejected, err.message, callback);
         } else {
             // handle the HEL message
+            debugLog("HEL_message received!");
             self._on_HEL_message(data, callback);
         }
     });

@@ -108,6 +108,7 @@
     "thenify": "^3.3.0",
     "treeify": "1.0.1",
     "underscore": "^1.8.3",
+    "ws": "^4.0.0",
     "xml-writer": "^1.7.0",
     "yargs": "^11.0.0"
   }

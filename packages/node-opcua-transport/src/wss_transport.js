@@ -314,7 +314,7 @@ WSS_transport.prototype._install_socket = function (socket) {
             debugLog(" SOCKET CLOSE : ".red, "had_error =".yellow,had_error.toString().cyan,self.name);
         }
         if (self._socket ) {
-            debugLog("  remote address = WS");
+            debugLog("  remote address = ",self._socket.url); //undefined for WebSocket.Server websockets
         }
         if (had_error) {
             if (self._socket) {
@@ -387,6 +387,7 @@ WSS_transport.prototype.disconnect = function (callback) {
     _cleanup_timers.call(self);
 
     if (self._socket) {
+        self._socket.close();
         self._socket.terminate();
         self._socket = null;
     }

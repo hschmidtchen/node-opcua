@@ -15,6 +15,7 @@ var utils = require("node-opcua-utils");
 var BinaryStream = require("node-opcua-binary-stream").BinaryStream;
 
 var ClientTCP_transport = require("node-opcua-transport").ClientTCP_transport;
+var ClientWSS_transport = require("node-opcua-transport").ClientWSS_transport;
 
 var hexDump = require("node-opcua-debug").hexDump;
 
@@ -50,6 +51,8 @@ var SecurityTokenRequestType = secure_channel_service.SecurityTokenRequestType;
 
 var do_trace_message = process.env.DEBUG && (process.env.DEBUG.indexOf("TRACE")) >= 0;
 var do_trace_statistics = process.env.DEBUG && (process.env.DEBUG.indexOf("STATS")) >= 0;
+
+var parseEndpointUrl = require("../../../node-opcua-transport/src/tools").parseEndpointUrl;
 
 var doPerfMonitoring = false;
 
@@ -666,7 +669,27 @@ ClientSecureChannelLayer.prototype.create = function (endpointUrl, callback) {
 
 
     self.endpointUrl = endpointUrl;
-    var transport = new ClientTCP_transport();
+
+    var ep = parseEndpointUrl(endpointUrl);
+    var protocol = ep.protocol;
+
+    switch (protocol) {
+        case "opc.tcp":
+            debugLog("client sec channel layer create tcp");
+            var transport = new ClientTCP_transport();
+        break;
+        case "opc.wss":
+            debugLog("client sec channel layer create wss");
+            var transport = new ClientWSS_transport();
+        break;
+        case "fake":
+        case "http":
+        case "https":
+        default:
+            throw new Error("this transport protocol is currently not supported :" + protocol);
+            return;
+    }
+    
     transport.timeout = self.transportTimeout;
     transport.protocolVersion = self.protocolVersion;
 
@@ -684,9 +707,12 @@ ClientSecureChannelLayer.prototype.create = function (endpointUrl, callback) {
             if (self.__call && self.__call._cancelBackoff) {
                 return;
             }
+            
+            debugLog("client sec channel establ conn transp connect...");
 
             transport.connect(endpointUrl, function (err) {
 
+                debugLog("client sec channel establ conn transp conn cb");
                 // force Backoff to fail if err is not ECONNRESET or ECONNREFUSE
                 // this mean that the connection to the server has succeeded but for some reason
                 // the server has denied the connection
@@ -782,6 +808,7 @@ ClientSecureChannelLayer.prototype.create = function (endpointUrl, callback) {
 
     };
 
+    debugLog("client sec channel establ conn...");
     _establish_connection(transport, endpointUrl, _on_connection.bind(this, transport, callback));
 
 };

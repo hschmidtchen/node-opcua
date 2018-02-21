@@ -11,6 +11,7 @@ var assert = require("node-opcua-assert");
 var async = require("async");
 var _ = require("underscore");
 var EventEmitter = require("events").EventEmitter;
+var WebSocket = require('ws');
 
 var UserIdentityTokenType = require("node-opcua-service-endpoints").UserIdentityTokenType;
 var MessageSecurityMode = require("node-opcua-service-secure-channel").MessageSecurityMode;
@@ -108,10 +109,24 @@ OPCUAServerEndPoint.prototype._dump_statistics = function () {
 
     var self = this;
 
-    self._server.getConnections(function (err, count) {
-        debugLog("CONCURRENT CONNECTION = ".cyan, count);
-    });
-    debugLog("MAX CONNECTIONS = ".cyan, self._server.maxConnections);
+    switch (self.protocol) {
+        case "opc.tcp":
+            self._server.getConnections(function (err, count) {
+                debugLog("CONCURRENT CONNECTION = ".cyan, count);
+                debugLog("MAX CONNECTIONS = ".cyan, self._server.maxConnections);
+            });
+            break;
+        case "opc.wss":
+            debugLog("CONCURRENT CONNECTION = ".cyan, self._server.clients.size);
+            debugLog("MAX CONNECTIONS = ".cyan, self._server._server.maxConnections);
+            break;
+        case "fake":
+        case "http":
+        case "https":
+        default:
+            throw new Error("this transport protocol is currently not supported :" + self.protocol);
+            return null;
+    }           
 };
 
 
@@ -147,13 +162,15 @@ OPCUAServerEndPoint.prototype._setup_server = function () {
             break;
         case "opc.wss":
             self._server = new WebSocket.Server({ port: self.port});
-
             //xx console.log(" Server with max connections ", self.maxConnections);
-            self._server.maxConnections = self.maxConnections + 1; // plus one extra
+            self._server._server.maxConnections = self.maxConnections + 1; // plus one extra
         
             self._listen_callback = null;
 
             self._server.on("connection", function (socket, req) {
+
+                //second listener
+                self._on_client_connection(socket);
 
                 // istanbul ignore next
                 if (doDebug) {
@@ -161,8 +178,8 @@ OPCUAServerEndPoint.prototype._setup_server = function () {
                     debugLog("WS server connected: "+req.connection.remoteAddress);
                 }
 
-                ws.isAlive = true;
-                ws.on('pong', heartbeat);
+                socket.isAlive = true;
+                socket.on('pong', heartbeat);
         
             }).on("close", function () {
                 debugLog("WS server closed : all connections have ended");
@@ -175,11 +192,12 @@ OPCUAServerEndPoint.prototype._setup_server = function () {
             function noop() {}
 
             function heartbeat() {
-            this.isAlive = true;
+                this.isAlive = true;
+                console.log("its alive!");
             }
             
-            const interval = setInterval(function ping() {
-                wss.clients.forEach(function each(ws) {
+            var interval = setInterval(function ping() {
+                self._server.clients.forEach(function each(ws) {
                 if (ws.isAlive === false) return ws.terminate();
             
                 ws.isAlive = false;
@@ -281,7 +299,7 @@ OPCUAServerEndPoint.prototype._on_client_connection = function (socket) {
     if(self.protocol === "opc.tcp"){
         socket.setNoDelay(true);
     }
-
+    debugLog("this: "+JSON.stringify(this.protocol));
     debugLog("OPCUAServerEndPoint#_on_client_connection", self._started);
     if (!self._started) {
         debugLog("OPCUAServerEndPoint#_on_client_connection SERVER END POINT IS PROBABLY SHUTTING DOWN !!! - Connection is refused".bgWhite.cyan);
@@ -291,7 +309,7 @@ OPCUAServerEndPoint.prototype._on_client_connection = function (socket) {
                 socket.end();
             break;
             case "opc.wss":
-                socket.terminate();
+                socket.close();
             break;
             case "fake":
             case "http":
@@ -312,7 +330,22 @@ OPCUAServerEndPoint.prototype._on_client_connection = function (socket) {
     function establish_connection() {
 
         var nbConnections = Object.keys(self._channels).length;
-        debugLog(" nbConnections ", nbConnections, " self._server.maxConnections", self._server.maxConnections, self.maxConnections);
+
+        switch (self.protocol) {
+            case "opc.tcp":
+                debugLog(" nbConnections ", nbConnections, " self._server.maxConnections", self._server.maxConnections, self.maxConnections);
+            break;
+            case "opc.wss":
+            debugLog(" nbConnections ", nbConnections, " self._server.maxConnections", self._server._server.maxConnections, self.maxConnections);
+            break;
+            case "fake":
+            case "http":
+            case "https":
+            default:
+                throw new Error("this transport protocol is currently not supported :" + self.protocol);
+                return;
+        }
+        
         if (nbConnections >= self.maxConnections) {
             debugLog("OPCUAServerEndPoint#_on_client_connection The maximum number of connection has been reached - Connection is refused".bgWhite.bold.cyan);
             switch (self.protocol) {
@@ -320,7 +353,7 @@ OPCUAServerEndPoint.prototype._on_client_connection = function (socket) {
                     socket.end();
                 break;
                 case "opc.wss":
-                    socket.terminate();
+                    socket.close();
                 break;
                 case "fake":
                 case "http":
@@ -348,7 +381,7 @@ OPCUAServerEndPoint.prototype._on_client_connection = function (socket) {
                         socket.end();
                     break;
                     case "opc.wss":
-                        socket.terminate();
+                        socket.close();
                     break;
                     case "fake":
                     case "http":
@@ -761,6 +794,7 @@ OPCUAServerEndPoint.prototype._end_listen = function (err) {
  */
 OPCUAServerEndPoint.prototype.listen = function (callback) {
 
+    debugLog("listen!!");
     var self = this;
     assert(_.isFunction(callback));
     assert(!self._started, "OPCUAServerEndPoint is already listening");
@@ -774,12 +808,28 @@ OPCUAServerEndPoint.prototype.listen = function (callback) {
     });
     self._server.on("listening",function() {
     });
-    self._server.listen(self.port, "::", function (err) { //'listening' listener
-        debugLog("LISTENING TO PORT ".green.bold, self.port, "err  ", err);
-        assert(!err, " cannot listen to port ");
-        self._started = true;
-        self._end_listen();
-    });
+
+    switch (self.protocol) {
+        case "opc.tcp":
+            self._server.listen(self.port, "::", function (err) { //'listening' listener
+                debugLog("TCP LISTENING TO PORT ".green.bold, self.port, "err  ", err);
+                assert(!err, " cannot listen to port ");
+                self._started = true;
+                self._end_listen();
+            });
+        break;
+        case "opc.wss":
+            debugLog("WSS LISTENING TO PORT ".green.bold, self.port);
+            self._started = true;
+            self._end_listen();
+        break;
+        case "fake":
+        case "http":
+        case "https":
+        default:
+            throw new Error("this transport protocol is currently not supported :" + self.protocol);
+            return;
+    }      
 };
 
 OPCUAServerEndPoint.prototype.killClientSockets = function (callback) {
@@ -794,6 +844,7 @@ OPCUAServerEndPoint.prototype.killClientSockets = function (callback) {
                 channel._transport._socket.destroy();
                 break;
                 case "opc.wss":
+                channel._transport._socket.close();
                 channel._transport._socket.terminate();
                 break;
                 case "fake":
@@ -877,7 +928,25 @@ OPCUAServerEndPoint.prototype.shutdown = function (callback) {
  */
 OPCUAServerEndPoint.prototype.start = function (callback) {
     assert(_.isFunction(callback));
-    this.listen(callback);
+
+    var self=this;
+    switch (self.protocol) {
+        case "opc.tcp":
+            this.listen(callback);
+            break;
+        case "opc.wss":
+            debugLog("WSS endpoint started!");
+            this.listen(callback);
+            //callback();
+            break;
+        case "fake":
+        case "http":
+        case "https":
+        default:
+            throw new Error("this transport protocol is currently not supported :" + self.protocol);
+            return;
+    }   
+    
 };
 
 OPCUAServerEndPoint.prototype.__defineGetter__("bytesWritten", function () {

@@ -16,7 +16,7 @@ var util = require("util");
 var BinaryStream = require("node-opcua-binary-stream").BinaryStream;
 
 // this modules
-var TCP_transport = require("./wss_transport").WSS_transport;
+var WSS_transport = require("./wss_transport").WSS_transport;
 
 var getFakeTransport = require("./tcp_transport").getFakeTransport;
 
@@ -29,6 +29,7 @@ var AcknowledgeMessage = require("../_generated_/_auto_generated_AcknowledgeMess
 
 var debugLog = require("node-opcua-debug").make_debugLog(__filename);
 
+var WebSocket = require('ws');
 
 var readMessageHeader = require("node-opcua-chunkmanager").readMessageHeader;
 
@@ -53,10 +54,12 @@ function createClientSocket(endpointUrl) {
             });
             return fakeSocket;
         case "opc.wss":
+            var socket = new WebSocket(endpointUrl);
+            return socket;
         case "http":
         case "https":
         default:
-            throw new Error("this transport protocol is currently not supported :" + ep.protocol);
+            throw new Error("createClientSocket: this transport protocol is currently not supported :" + ep.protocol);
             return null;
 
     }
@@ -191,11 +194,13 @@ ClientWSS_transport.prototype.connect = function (endpointUrl, callback, options
             self.emit("connection_break");
         }
     }
+    
+    debugLog("client wss transp reg listeners");
 
     self._socket.once("error", _on_socket_error_for_connect);
     self._socket.once("end",_on_socket_end_for_connect);
 
-    self._socket.on("connect", function () {
+    self._socket.on("open", function () {
 
         _remove_connect_listeners();
 
@@ -287,7 +292,7 @@ ClientWSS_transport.prototype._perform_HEL_ACK_transaction = function (callback)
     assert(_.isFunction(callback));
 
     var counter = 0;
-
+    debugLog("client wss transp HEL ACK trans");
     self._install_one_time_message_receiver(function on_ACK_response(err, data) {
 
         assert(counter === 0);
@@ -295,7 +300,7 @@ ClientWSS_transport.prototype._perform_HEL_ACK_transaction = function (callback)
 
         if (err) {
             callback(err);
-            self._socket.terminate();
+            self._socket.close();
         } else {
             self._handle_ACK_response(data, function (inner_err) {
                 callback(inner_err);
