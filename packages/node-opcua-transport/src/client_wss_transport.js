@@ -54,7 +54,9 @@ function createClientSocket(endpointUrl) {
             });
             return fakeSocket;
         case "opc.wss":
-            var socket = new WebSocket(endpointUrl);
+            //workaround since ws does not recognize opc.wss as secure 
+            var socket = new WebSocket(endpointUrl.substring(4),{rejectUnauthorized: false});
+            //var socket = new WebSocket(endpointUrl,{rejectUnauthorized: false});
             return socket;
         case "http":
         case "https":

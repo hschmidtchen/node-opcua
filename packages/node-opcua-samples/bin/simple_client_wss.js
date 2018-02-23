@@ -893,9 +893,10 @@ async.series([
                 switch (parseEndpointUrl(endpointUrl).protocol) {
                     case "opc.tcp":
                         socket.end();
+                        socket.emit("error", new Error("ECONNRESET"));
                         break;
                     case "opc.wss":
-                        socket.close();
+                        socket.emit("error", new Error("ECONNRESET"));
                         break;
                     case "fake":
                     case "http":
@@ -904,8 +905,6 @@ async.series([
                         throw new Error("this transport protocol is currently not supported :" + self.parent.protocol);
                         return;
                 }
-                
-                socket.emit("error", new Error("ECONNRESET"));
             }, timeout/2.0);
 
         }else {

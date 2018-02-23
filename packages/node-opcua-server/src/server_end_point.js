@@ -5,6 +5,8 @@
  */
 
 var net = require("net");
+var https = require("https");
+var fs = require("fs");
 var util = require("util");
 var path = require("path");
 var assert = require("node-opcua-assert");
@@ -75,6 +77,9 @@ function OPCUAServerEndPoint(options) {
 
     self._certificateChain = options.certificateChain;
     self._privateKey = options.privateKey;
+
+    self.sslCertificateFile = options.sslCertificateFile || path.join(__dirname,"../","certificates/server_selfsigned_cert_2048.pem");
+    self.sslKeyFile = options.sslKeyFile || path.join(__dirname,"../","certificates/PKI/own/private/private_key.pem");
 
     self._channels = {};
 
@@ -161,7 +166,21 @@ OPCUAServerEndPoint.prototype._setup_server = function () {
 
             break;
         case "opc.wss":
-            self._server = new WebSocket.Server({ port: self.port});
+            //load ssl credentials
+            var sslCertificate = fs.readFileSync(self.sslCertificateFile);
+            var sslKey = fs.readFileSync(self.sslKeyFile);
+
+            //create a https server
+            var httpsServer = https.createServer({
+                cert: sslCertificate,
+                key: sslKey
+            });
+            //httpsServer.listen(self.port);
+
+            //create WebsocketServer
+            self._server = new WebSocket.Server({ server: httpsServer});
+            //self._server = new WebSocket.Server({ port: self.port});
+
             //xx console.log(" Server with max connections ", self.maxConnections);
             self._server._server.maxConnections = self.maxConnections + 1; // plus one extra
         
@@ -819,9 +838,12 @@ OPCUAServerEndPoint.prototype.listen = function (callback) {
             });
         break;
         case "opc.wss":
-            debugLog("WSS LISTENING TO PORT ".green.bold, self.port);
-            self._started = true;
-            self._end_listen();
+            self._server._server.listen(self.port, "::", function (err) { //'listening' listener
+                debugLog("WSS LISTENING TO PORT ".green.bold, self.port, "err  ", err);
+                assert(!err, " cannot listen to port ");
+                self._started = true;
+                self._end_listen();
+            });
         break;
         case "fake":
         case "http":
