@@ -540,6 +540,8 @@ if(registerToDiscovery){
     });
 }
 
+server.endpoints[0].addOutgoingConnection("opc.wss://loaclhost:7777/UA/Client",5000);
+
 server.on("newChannel",function(channel) {
     console.log("Client connected with address = ".bgYellow,channel.remoteAddress," port = ",channel.remotePort);
 });

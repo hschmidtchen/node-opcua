@@ -93,8 +93,9 @@ function OPCUAServerEndPoint(options) {
 
     self._setup_server();
 
-
     self._endpoints = [];
+    self._reverseConnections = [];
+    self._reverseSockets = [];
 
     self.objectFactory = options.objectFactory;
 
@@ -134,6 +135,80 @@ OPCUAServerEndPoint.prototype._dump_statistics = function () {
     }           
 };
 
+OPCUAServerEndPoint.prototype.addOutgoingConnection = function (clientUrl,backoffTime){
+    var self = this;
+
+    // prevent illegal call to connect
+    if (self._reverseConnections.includes(clientUrl)) {
+        setImmediate(function () {
+            callback(new Error("reverse connection already exists!"), null);
+        });
+        return;
+    }else{
+        self._reverseConnections.push(clientUrl);
+    }
+
+    function _reverse_connect(clientUrl, backoffTime){
+        switch (self.protocol) {
+            case "opc.wss":
+                //load ssl credentials
+                var sslCertificate = fs.readFileSync(self.sslCertificateFile);
+                var sslKey = fs.readFileSync(self.sslKeyFile);
+    
+                //connect to the Websocket.Server at the client
+                //workaround since ws does not recognize opc.wss as secure 
+                var socket = new WebSocket(clientUrl.substring(4),{rejectUnauthorized: false});
+                //var socket = new WebSocket(endpointUrl,{rejectUnauthorized: false});
+    
+                socket.on("open", function (socket, req) {
+    
+                    //second listener
+                    self._on_client_connection(socket);
+    
+                    // istanbul ignore next
+                    if (doDebug) {
+                        self._dump_statistics();
+                        debugLog("WS Client connected: "+clientUrl);
+                    }
+    
+                    socket.isAlive = true;
+    
+                    socket.on('pong', heartbeat);
+    
+                    self._reverseSockets.push(socket);
+            
+                }).on("close", function () {
+                    debugLog("WS server outgoing closed : "+clientUrl);
+                    var index=self._reverseConnections.indexOf(clientUrl);
+                    if(index>=0){
+                        self._reverseSockets[index]=null;
+                        socket.terminate();
+                        setTimeout(function(){_reverse_connect(clientUrl, backoffTime)}, backoffTime);
+                    }
+                    //trigger backoff
+                }).on("error", function (err) {
+                    // this could be because the port is already in use
+                    debugLog("WS server outgoing error: ".red.bold, err.message,clientUrl);
+                });
+    
+                //timeout with heartbeat
+                function heartbeat() {
+                    this.isAlive = true;
+                    console.log("its alive!");
+                }
+                break;
+            case "opc.tcp":
+            case "fake":
+            case "http":
+            case "https":
+            default:
+                throw new Error("this transport protocol is currently not supported :" + self.protocol);
+                return null;
+        }
+    };
+
+    _reverse_connect(clientUrl, backoffTime);
+};
 
 OPCUAServerEndPoint.prototype._setup_server = function () {
     var self = this;
@@ -183,7 +258,7 @@ OPCUAServerEndPoint.prototype._setup_server = function () {
 
             //xx console.log(" Server with max connections ", self.maxConnections);
             self._server._server.maxConnections = self.maxConnections + 1; // plus one extra
-        
+
             self._listen_callback = null;
 
             self._server.on("connection", function (socket, req) {
@@ -215,12 +290,25 @@ OPCUAServerEndPoint.prototype._setup_server = function () {
                 console.log("its alive!");
             }
             
+            // for normal endpoint connections
             var interval = setInterval(function ping() {
                 self._server.clients.forEach(function each(ws) {
                 if (ws.isAlive === false) return ws.terminate();
             
                 ws.isAlive = false;
                 ws.ping(noop);
+                });
+            }, self.timeout);
+
+            // for outgoing connections
+            var interval2 = setInterval(function ping() {
+                self._reverseSockets.forEach(function each(ws) {
+                    if(ws !== null){
+                        if (ws.isAlive === false) return ws.terminate();
+
+                        ws.isAlive = false;
+                        ws.ping(noop);
+                    }
                 });
             }, self.timeout);
 
@@ -309,6 +397,72 @@ function _prevent_DOS_Attack(self, establish_connection) {
     }
 }
 
+OPCUAServerEndPoint.prototype._on_client_reverse_connection = function (socket) {
+
+    // a client is attempting a connection on the socket
+    var self = this;
+
+    if(self.protocol === "opc.tcp"){
+        socket.setNoDelay(true);
+    }
+    debugLog("this: "+JSON.stringify(this.protocol));
+    debugLog("OPCUAServerEndPoint#_on_client_reverse_connection", self._started);
+    if (!self._started) {
+        debugLog("OPCUAServerEndPoint#_on_client_connection SERVER END POINT IS PROBABLY SHUTTING DOWN !!! - Connection is refused".bgWhite.cyan);
+        
+        switch (self.protocol) {
+            case "opc.tcp":
+                socket.end();
+            break;
+            case "opc.wss":
+                socket.close();
+            break;
+            case "fake":
+            case "http":
+            case "https":
+            default:
+                throw new Error("this transport protocol is currently not supported :" + self.protocol);
+                return;
+        }   
+        return;
+    }
+
+    debugLog("OPCUAServerEndPoint._on_clien_reverse_connection successful => New Channel");
+
+    var channel = new ServerSecureChannelLayer({
+        parent: self,
+        timeout: self.timeout,
+        defaultSecureTokenLifetime: self.defaultSecureTokenLifetime,
+        objectFactory: self.objectFactory
+    });
+
+    channel.init(socket, function (err) {
+        if (err) {
+            switch (self.protocol) {
+                case "opc.tcp":
+                    socket.end();
+                break;
+                case "opc.wss":
+                    socket.close();
+                break;
+                case "fake":
+                case "http":
+                case "https":
+                default:
+                    throw new Error("this transport protocol is currently not supported :" + self.protocol);
+                    return;
+            }   
+        } else {
+            self._registerChannel(channel);
+            debugLog("server receiving a client reverse connection");
+        }
+    });
+
+    channel.on("message", function (message) {
+        // forward
+        self.emit("message", message, channel, self);
+    });
+};
 
 OPCUAServerEndPoint.prototype._on_client_connection = function (socket) {
 

@@ -373,8 +373,6 @@ ServerSecureChannelLayer.prototype.init = function (socket, callback) {
        self._abort();
     };
     self.transport.on("socket_closed",self._transport_socket_close_listener);
-
-
 };
 
 ServerSecureChannelLayer.prototype._rememberClientAddressAndPort = function() {
