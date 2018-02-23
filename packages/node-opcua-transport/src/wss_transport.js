@@ -139,11 +139,17 @@ function record(data,extra) {
 
 
 WSS_transport.prototype._write_chunk = function (message_chunk) {
-
+    var self = this;
     if (this._socket) {
-        this.bytesWritten += message_chunk.length;
-        this.chunkWrittenCount ++;
-        this._socket.send(message_chunk);
+        if(this._socket.readyState !== 1){
+            if (doDebug) {
+                debugLog(" SOCKET ERROR : ".red, "Socket not open!".yellow,this._socket.readyState, self._socket.name, self.name);
+            }
+        }else{
+            this.bytesWritten += message_chunk.length;
+            this.chunkWrittenCount ++;
+            this._socket.send(message_chunk);
+        }
     }
 };
 
@@ -308,21 +314,27 @@ WSS_transport.prototype._install_socket = function (socket) {
             self.packetAssembler.feed(data);
         }
 
-    }).on("close", function (had_error) {
+    }).on("close", function (code, reason) {
         // istanbul ignore next
         if (doDebug) {
-            debugLog(" SOCKET CLOSE : ".red, "had_error =".yellow,had_error.toString().cyan,self.name);
+            debugLog(" SOCKET CLOSE (inst sock): ".red, "had_error =".yellow,code.toString().cyan,reason.toString().cyan,self.name);
         }
         if (self._socket ) {
             debugLog("  remote address = ",self._socket.url); //undefined for WebSocket.Server websockets
         }
+        /*
         if (had_error) {
             if (self._socket) {
                 self._socket.terminate();
             }
         }
         var err = had_error ? new Error("ERROR IN SOCKET") : null;
-        self.on_socket_closed(err);
+
+        if (doDebug) {
+            debugLog(" SOCKET END : ".red, err ? err.message.yellow : "null", self._socket.name, self.name);
+        }*/
+        self._on_socket_ended_message();
+        self.on_socket_closed();
 
     }).on("error", function (err) {
         // istanbul ignore next

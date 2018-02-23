@@ -171,7 +171,7 @@ ClientWSS_transport.prototype.connect = function (endpointUrl, callback, options
 
     function _remove_connect_listeners() {
         self._socket.removeListener("error", _on_socket_error_for_connect);
-        self._socket.removeListener("end"  , _on_socket_end_for_connect);
+        self._socket.removeListener("close"  , _on_socket_end_for_connect);
     }
 
     function _on_socket_error_after_connection(err) {
@@ -198,7 +198,7 @@ ClientWSS_transport.prototype.connect = function (endpointUrl, callback, options
     debugLog("client wss transp reg listeners");
 
     self._socket.once("error", _on_socket_error_for_connect);
-    self._socket.once("end",_on_socket_end_for_connect);
+    self._socket.once("close",_on_socket_end_for_connect);
 
     self._socket.on("open", function () {
 
