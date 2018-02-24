@@ -676,11 +676,11 @@ ClientSecureChannelLayer.prototype.create = function (endpointUrl, callback) {
     switch (protocol) {
         case "opc.tcp":
             debugLog("client sec channel layer create tcp");
-            var transport = new ClientTCP_transport();
+            var transport = new ClientTCP_transport(self.parent._isPassive, self.parent);
         break;
         case "opc.wss":
             debugLog("client sec channel layer create wss");
-            var transport = new ClientWSS_transport();
+            var transport = new ClientWSS_transport(self.parent._isPassive, self.parent);
         break;
         case "fake":
         case "http":
@@ -831,7 +831,10 @@ ClientSecureChannelLayer.prototype.dispose = function () {
     _cancel_security_token_watchdog.call(self);
     if (self.__call) {
         self.__call.abort();
-    }
+    }/*
+    if(self.parent.isPassive && self._transport){
+        self._transport.close();
+    }*/
 
 };
 

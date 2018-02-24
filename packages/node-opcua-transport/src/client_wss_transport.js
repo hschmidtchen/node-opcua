@@ -8,8 +8,11 @@
 var assert = require("node-opcua-assert");
 
 var net = require("net");
+var https = require("https");
+var fs = require("fs");
 var _ = require("underscore");
 var util = require("util");
+var path = require("path");
 
 
 // opcua requires
@@ -34,38 +37,6 @@ var WebSocket = require('ws');
 var readMessageHeader = require("node-opcua-chunkmanager").readMessageHeader;
 
 var decodeMessage = require("./tools").decodeMessage;
-
-function createClientSocket(endpointUrl) {
-    // create a socket based on Url
-    var ep = parseEndpointUrl(endpointUrl);
-    var port = ep.port;
-    var hostname = ep.hostname;
-    switch (ep.protocol) {
-        case "opc.tcp":
-            var socket = net.connect({host: hostname, port: port});
-            socket.setNoDelay(true);
-
-            return socket;
-        case "fake":
-            var fakeSocket = getFakeTransport();
-            assert(ep.protocol === "fake", " Unsupported transport protocol");
-            process.nextTick(function () {
-                fakeSocket.emit("connect");
-            });
-            return fakeSocket;
-        case "opc.wss":
-            //workaround since ws does not recognize opc.wss as secure 
-            var socket = new WebSocket(endpointUrl.substring(4),{rejectUnauthorized: false});
-            //var socket = new WebSocket(endpointUrl,{rejectUnauthorized: false});
-            return socket;
-        case "http":
-        case "https":
-        default:
-            throw new Error("createClientSocket: this transport protocol is currently not supported :" + ep.protocol);
-            return null;
-
-    }
-}
 
 /**
  * a ClientWSS_transport connects to a remote server socket and
@@ -108,12 +79,84 @@ function createClientSocket(endpointUrl) {
  *
  *
  */
-var ClientWSS_transport = function () {
+var ClientWSS_transport = function (isPassive, client) {
     WSS_transport.call(this);
     var self = this;
     self.connected = false;
+    self._isPassive=isPassive;
+    self._client = client;
 };
 util.inherits(ClientWSS_transport, WSS_transport);
+
+/*ClientWSS_transport.prototype.close=function(){
+    var self = this;
+    if(self._server !== null){
+        self._server.close();
+        self._server=null;
+    }
+};*/
+
+ClientWSS_transport.prototype._createClientSocket = function(endpointUrl, callback) {
+    var self=this;
+
+    // create a socket based on Url
+    var ep = parseEndpointUrl(endpointUrl);
+    var port = ep.port;
+    var hostname = ep.hostname;
+
+    debugLog("passive: "+self._isPassive);
+
+    if(self._isPassive){
+        debugLog("Passive branch! ");  
+
+        //create WebsocketServer
+        self._server = new WebSocket.Server({ server: self._client._httpsServer});
+        //self._server = new WebSocket.Server({ port: self.port});              
+
+        self._server.on("connection", function (socket, req) {
+
+            //kill the server if the socket gets closed
+            socket.on("close",function(){
+                self._server.close();
+            });
+
+            // istanbul ignore next
+            debugLog("WS client passive incoming connection: "+req.connection.remoteAddress);
+            self._socket = socket;
+            self._connect_end(callback);
+    
+        }).on("close", function () {
+            debugLog("WS client passive server closed : all connections have ended");
+            self._server=null;
+        }).on("error", function (err) {
+            // this could be because the port is already in use
+            debugLog("WS client passive server error: ".red.bold, err.message);
+            self.emit("error",err);
+        });
+
+        self._client._httpsServer.on('error', (err) => {
+            if (err.code === 'EADDRINUSE') {
+              console.log('Address in use, retrying...');
+              setTimeout(() => {
+                self._client._httpsServer.close();
+                self._client._httpsServer.listen(port,function listening() {
+                    debugLog("WS client passive server listening: "+endpointUrl);
+                }); 
+              }, 1000);
+            }
+        });
+        
+        self._client._httpsServer.listen(port,function listening() {
+            debugLog("WS client passive server listening: "+endpointUrl);
+        }); 
+    }
+    else{        
+        //workaround since ws does not recognize opc.wss as secure 
+        self._socket = new WebSocket(endpointUrl.substring(4),{rejectUnauthorized: false});
+        //var socket = new WebSocket(endpointUrl,{rejectUnauthorized: false});
+        self._connect_end(callback);
+    }
+}
 
 ClientWSS_transport.prototype.on_socket_ended = function(err) {
 
@@ -151,13 +194,17 @@ ClientWSS_transport.prototype.connect = function (endpointUrl, callback, options
 
     debugLog("endpointUrl =", endpointUrl, "ep", ep);
 
-
     try {
-        self._socket = createClientSocket(endpointUrl);
+        self._createClientSocket(endpointUrl, callback);
     }
     catch (err) {
         return callback(err);
     }
+}
+
+ClientWSS_transport.prototype._connect_end = function (callback) {
+    var self = this;
+    debugLog("connect_end!")
     self._socket.name = "CLIENT";
     self._install_socket(self._socket);
 
@@ -178,7 +225,7 @@ ClientWSS_transport.prototype.connect = function (endpointUrl, callback, options
 
     function _on_socket_error_after_connection(err) {
         debugLog(" ClientWSS_transport Socket Error",err.message);
-
+        
         // EPIPE : EPIPE (Broken pipe): A write on a pipe, socket, or FIFO for which there is no process to read the
         // data. Commonly encountered at the net and http layers, indicative that the remote side of the stream being
         // written to has been closed.
@@ -195,6 +242,10 @@ ClientWSS_transport.prototype.connect = function (endpointUrl, callback, options
              */
             self.emit("connection_break");
         }
+
+        if(self._isPassive){
+            self._socket.close();
+        }
     }
     
     debugLog("client wss transp reg listeners");
@@ -204,6 +255,7 @@ ClientWSS_transport.prototype.connect = function (endpointUrl, callback, options
 
     self._socket.on("open", function () {
 
+        debugLog("socket open");
         _remove_connect_listeners();
 
         self._perform_HEL_ACK_transaction(function(err) {
@@ -226,6 +278,11 @@ ClientWSS_transport.prototype.connect = function (endpointUrl, callback, options
             callback(err);
         });
     });
+
+    if(self._isPassive){
+        debugLog("emopen");
+        setTimeout(function(){self._socket.emit("open")},500);
+    }
 };
 
 

@@ -6,6 +6,7 @@
 var util = require("util");
 var EventEmitter = require("events").EventEmitter;
 var fs = require("fs");
+var https = require("https");
 var path = require("path");
 var async = require("async");
 var _ = require("underscore");
@@ -13,7 +14,7 @@ var assert = require("node-opcua-assert");
 var once = require("once");
 var delayed = require("delayed");
 
-
+var parseEndpointUrl = require("../../node-opcua-transport/src/tools").parseEndpointUrl;
 var endpoints_service = require("node-opcua-service-endpoints");
 
 var GetEndpointsRequest = endpoints_service.GetEndpointsRequest;
@@ -78,6 +79,26 @@ function OPCUAClientBase(options) {
 
     this._sessions = [];
 
+    this._isPassive = options.isPassive || false;
+
+    this._port=12345;
+
+    if(this._isPassive){
+        //load ssl credentials
+        var sslCertificateFile = path.join(__dirname,"../../node-opcua-samples/","certificates/client_selfsigned_cert_2048.pem");
+        var sslKeyFile = path.join(__dirname,"../../node-opcua-samples/","certificates/client_key_2048.pem");
+        var sslCertificate = fs.readFileSync(sslCertificateFile);
+        var sslKey = fs.readFileSync(sslKeyFile);
+
+        //create a https server
+        this._httpsServer = https.createServer({
+            cert: sslCertificate,
+            key: sslKey
+        });
+
+        //limit to one single concurrent connection
+        this._httpsServer.maxConnections = 1;  
+    }
 
     this._server_endpoints = [];
     this._secureChannel = null;
@@ -171,6 +192,10 @@ OPCUAClientBase.prototype._destroy_secure_channel = function () {
         self._secureChannel.removeAllListeners();
         self._secureChannel = null;
     }
+    
+    if(self._isPassive){
+        self._httpsServer.close();
+    }
 };
 
 
@@ -181,7 +206,8 @@ function __findEndpoint(endpointUrl, params, callback) {
 
     var options = {
         connectionStrategy: params.connectionStrategy,
-        endpoint_must_exist: false
+        endpoint_must_exist: false,
+        isPassive: self._isPassive
     };
 
     var client = new OPCUAClientBase(options);

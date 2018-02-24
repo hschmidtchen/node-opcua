@@ -157,37 +157,42 @@ OPCUAServerEndPoint.prototype.addOutgoingConnection = function (clientUrl,backof
     
                 //connect to the Websocket.Server at the client
                 //workaround since ws does not recognize opc.wss as secure 
-                var socket = new WebSocket(clientUrl.substring(4),{rejectUnauthorized: false});
+                var wsocket = new WebSocket(clientUrl.substring(4),{rejectUnauthorized: false});
                 //var socket = new WebSocket(endpointUrl,{rejectUnauthorized: false});
     
-                socket.on("open", function (socket, req) {
-    
+                wsocket.on("open", function () {
+                    wsocket.isAlive = true;
+                    wsocket.haderror =false;
+
                     //second listener
-                    self._on_client_connection(socket);
+                    self._on_client_connection(wsocket);
     
                     // istanbul ignore next
                     if (doDebug) {
                         self._dump_statistics();
                         debugLog("WS Client connected: "+clientUrl);
-                    }
+                    }                    
     
-                    socket.isAlive = true;
+                    wsocket.on('pong', heartbeat);
     
-                    socket.on('pong', heartbeat);
-    
-                    self._reverseSockets.push(socket);
+                    self._reverseSockets.push(wsocket);
             
                 }).on("close", function () {
                     debugLog("WS server outgoing closed : "+clientUrl);
                     var index=self._reverseConnections.indexOf(clientUrl);
                     if(index>=0){
                         self._reverseSockets[index]=null;
-                        socket.terminate();
-                        setTimeout(function(){_reverse_connect(clientUrl, backoffTime)}, backoffTime);
+                        wsocket.terminate();
+                        if(wsocket.haderror !== false && wsocket.haderror.message.match(/ECONNREFUSED/)){
+                            setTimeout(function(){_reverse_connect(clientUrl, backoffTime)}, backoffTime);
+                        }else{
+                            _reverse_connect(clientUrl, backoffTime);
+                        }                        
                     }
                     //trigger backoff
                 }).on("error", function (err) {
                     // this could be because the port is already in use
+                    wsocket.haderror = err;
                     debugLog("WS server outgoing error: ".red.bold, err.message,clientUrl);
                 });
     
