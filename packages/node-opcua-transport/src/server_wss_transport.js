@@ -18,6 +18,7 @@ var verify_message_chunk = require("node-opcua-chunkmanager").verify_message_chu
 
 var TCPErrorMessage = require("../_generated_/_auto_generated_TCPErrorMessage").TCPErrorMessage;
 var HelloMessage = require("../_generated_/_auto_generated_HelloMessage").HelloMessage;
+var ReverseHelloMessage = require("../_generated_/_auto_generated_ReverseHelloMessage").ReverseHelloMessage;
 var AcknowledgeMessage = require("../_generated_/_auto_generated_AcknowledgeMessage").AcknowledgeMessage;
 
 var packTcpMessage = require("./tools").packTcpMessage;
@@ -37,7 +38,9 @@ var WSS_transport = require("./wss_transport").WSS_transport;
  * @constructor
  *
  */
-var ServerWSS_transport = function () {
+var ServerWSS_transport = function (isPassive, endPoint) {
+    this._endPoint = endPoint;
+    this._isPassive = isPassive;
     WSS_transport.call(this);
 };
 util.inherits(ServerWSS_transport, WSS_transport);
@@ -197,6 +200,29 @@ ServerWSS_transport.prototype._on_HEL_message = function (data, callback) {
 
 };
 
+ServerWSS_transport.prototype._send_reverse_HELLO_request = function () {    
+
+    var self = this;
+    var endpointUrl=self._endPoint.endpointDescriptions()[0].endpointUrl;
+    debugLog("RHE endPointUrl: "+endpointUrl);
+    assert(self._socket);
+    assert(_.isFinite(self.protocolVersion));
+    assert(endpointUrl.length > 0, " expecting a valid endpoint url");
+
+    // Write a message to the socket as soon as the server is connected,
+    // the client will receive it as message from the server
+    var reverseHelloMessage = new ReverseHelloMessage({
+        serverUri: self._endPoint.serverInfo.applicationUri,
+        endpointUrl: endpointUrl
+    });
+
+    debugLog("sU: "+self._endPoint.serverInfo.applicationUri+" eU: "+endpointUrl);
+
+    var messageChunk = packTcpMessage("RHE", reverseHelloMessage);
+    self._write_chunk(messageChunk);
+    debugLog("RHE sent!!!");
+};
+
 /**
  * Initialize the server transport.
  *
@@ -226,7 +252,10 @@ ServerWSS_transport.prototype.init = function (socket, callback) {
     self._install_socket(socket);
 
     self._install_HEL_message_receiver(callback);
-
+    
+    if(this._isPassive){
+        self._send_reverse_HELLO_request();
+    }
 };
 
 exports.ServerWSS_transport = ServerWSS_transport;

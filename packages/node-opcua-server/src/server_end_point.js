@@ -165,7 +165,7 @@ OPCUAServerEndPoint.prototype.addOutgoingConnection = function (clientUrl,backof
                     wsocket.haderror =false;
 
                     //second listener
-                    self._on_client_connection(wsocket);
+                    self._on_client_connection(wsocket, true);
     
                     // istanbul ignore next
                     if (doDebug) {
@@ -401,75 +401,7 @@ function _prevent_DOS_Attack(self, establish_connection) {
         setImmediate(establish_connection);
     }
 }
-
-OPCUAServerEndPoint.prototype._on_client_reverse_connection = function (socket) {
-
-    // a client is attempting a connection on the socket
-    var self = this;
-
-    if(self.protocol === "opc.tcp"){
-        socket.setNoDelay(true);
-    }
-    debugLog("this: "+JSON.stringify(this.protocol));
-    debugLog("OPCUAServerEndPoint#_on_client_reverse_connection", self._started);
-    if (!self._started) {
-        debugLog("OPCUAServerEndPoint#_on_client_connection SERVER END POINT IS PROBABLY SHUTTING DOWN !!! - Connection is refused".bgWhite.cyan);
-        
-        switch (self.protocol) {
-            case "opc.tcp":
-                socket.end();
-            break;
-            case "opc.wss":
-                socket.close();
-            break;
-            case "fake":
-            case "http":
-            case "https":
-            default:
-                throw new Error("this transport protocol is currently not supported :" + self.protocol);
-                return;
-        }   
-        return;
-    }
-
-    debugLog("OPCUAServerEndPoint._on_clien_reverse_connection successful => New Channel");
-
-    var channel = new ServerSecureChannelLayer({
-        parent: self,
-        timeout: self.timeout,
-        defaultSecureTokenLifetime: self.defaultSecureTokenLifetime,
-        objectFactory: self.objectFactory
-    });
-
-    channel.init(socket, function (err) {
-        if (err) {
-            switch (self.protocol) {
-                case "opc.tcp":
-                    socket.end();
-                break;
-                case "opc.wss":
-                    socket.close();
-                break;
-                case "fake":
-                case "http":
-                case "https":
-                default:
-                    throw new Error("this transport protocol is currently not supported :" + self.protocol);
-                    return;
-            }   
-        } else {
-            self._registerChannel(channel);
-            debugLog("server receiving a client reverse connection");
-        }
-    });
-
-    channel.on("message", function (message) {
-        // forward
-        self.emit("message", message, channel, self);
-    });
-};
-
-OPCUAServerEndPoint.prototype._on_client_connection = function (socket) {
+OPCUAServerEndPoint.prototype._on_client_connection = function (socket, isPassive) {
 
     // a client is attempting a connection on the socket
     var self = this;
@@ -549,7 +481,8 @@ OPCUAServerEndPoint.prototype._on_client_connection = function (socket) {
             parent: self,
             timeout: self.timeout,
             defaultSecureTokenLifetime: self.defaultSecureTokenLifetime,
-            objectFactory: self.objectFactory
+            objectFactory: self.objectFactory,
+            isPassive: isPassive || false
         });
 
         channel.init(socket, function (err) {

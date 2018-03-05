@@ -29,15 +29,21 @@ var parseEndpointUrl = require("./tools").parseEndpointUrl;
 var HelloMessage = require("../_generated_/_auto_generated_HelloMessage").HelloMessage;
 var TCPErrorMessage = require("../_generated_/_auto_generated_TCPErrorMessage").TCPErrorMessage;
 var AcknowledgeMessage = require("../_generated_/_auto_generated_AcknowledgeMessage").AcknowledgeMessage;
+var ReverseHelloMessage = require("../_generated_/_auto_generated_ReverseHelloMessage").ReverseHelloMessage;
 
 var debugLog = require("node-opcua-debug").make_debugLog(__filename);
+var debug = require("node-opcua-debug");
+var hexDump = debug.hexDump;
+
+var StatusCode = require("node-opcua-status-code").StatusCode;
+var StatusCodes = require("node-opcua-status-code").StatusCodes;
 
 var WebSocket = require('ws');
 
 var readMessageHeader = require("node-opcua-chunkmanager").readMessageHeader;
 
 var decodeMessage = require("./tools").decodeMessage;
-
+var StatusCodes = require("node-opcua-status-code").StatusCodes;
 /**
  * a ClientWSS_transport connects to a remote server socket and
  * initiates a communication with a HEL/ACK transaction.
@@ -85,6 +91,7 @@ var ClientWSS_transport = function (isPassive, client) {
     self.connected = false;
     self._isPassive=isPassive;
     self._client = client;
+    self._reversehelloreceived = false;
 };
 util.inherits(ClientWSS_transport, WSS_transport);
 
@@ -107,7 +114,9 @@ ClientWSS_transport.prototype._createClientSocket = function(endpointUrl, callba
     debugLog("passive: "+self._isPassive);
 
     if(self._isPassive){
-        debugLog("Passive branch! ");  
+        debugLog("Passive branch! ");
+        //Hard-coded port where the server can connect to (needed for local host development)
+        port=7777;  
 
         //create WebsocketServer
         self._server = new WebSocket.Server({ server: self._client._httpsServer});
@@ -144,8 +153,8 @@ ClientWSS_transport.prototype._createClientSocket = function(endpointUrl, callba
                 }); 
               }, 1000);
             }
-        });
-        
+        });        
+
         self._client._httpsServer.listen(port,function listening() {
             debugLog("WS client passive server listening: "+endpointUrl);
         }); 
@@ -258,30 +267,54 @@ ClientWSS_transport.prototype._connect_end = function (callback) {
         debugLog("socket open");
         _remove_connect_listeners();
 
-        self._perform_HEL_ACK_transaction(function(err) {
-            if(!err) {
+        if(!self._isPassive){
+            self._perform_HEL_ACK_transaction(function(err) {
+                if(!err) {
 
-                // install error handler to detect connection break
-                self._socket.on("error",_on_socket_error_after_connection);
+                    // install error handler to detect connection break
+                    self._socket.on("error",_on_socket_error_after_connection);
 
-                self.connected = true;
-                /**
-                 * notify the observers that the transport is connected (the socket is connected and the the HEL/ACK
-                 * transaction has been done)
-                 * @event connect
-                 *
-                 */
-                self.emit("connect");
-            } else {
-                debugLog("_perform_HEL_ACK_transaction has failed with err=",err.message);
-            }
-            callback(err);
-        });
+                    self.connected = true;
+                    /**
+                     * notify the observers that the transport is connected (the socket is connected and the the HEL/ACK
+                     * transaction has been done)
+                     * @event connect
+                     *
+                     */
+                    self.emit("connect");
+                } else {
+                    debugLog("_perform_HEL_ACK_transaction has failed with err=",err.message);
+                }
+                callback(err);
+            });
+        }else{
+             //add RHE listener
+            self._install_RHE_message_receiver(function(err) {
+                if(!err) {
+
+                    debugLog("RHE Recv installed");
+                    // install error handler to detect connection break
+                    self._socket.on("error",_on_socket_error_after_connection);
+
+                    self.connected = true;
+                    /**
+                     * notify the observers that the transport is connected (the socket is connected and the the HEL/ACK
+                     * transaction has been done)
+                     * @event connect
+                     *
+                     */
+                    self.emit("connect");
+                } else {
+                    debugLog("_perform_RHE_transaction has failed with err=",err.message);
+                }
+                callback(err);
+            });
+        }
     });
 
     if(self._isPassive){
         debugLog("emopen");
-        setTimeout(function(){self._socket.emit("open")},500);
+        self._socket.emit("open");
     }
 };
 
@@ -367,6 +400,116 @@ ClientWSS_transport.prototype._perform_HEL_ACK_transaction = function (callback)
         }
     });
     self._send_HELLO_request();
+};
+
+ClientWSS_transport.prototype._install_RHE_message_receiver = function (callback) {
+    debugLog("RHE_message_receiver installed!");
+    var self = this;
+
+    self._install_one_time_message_receiver(function (err, data) {
+        if (err) {
+            //err is either a timeout or connection aborted ...
+            self._abortWithError(StatusCodes.BadConnectionRejected, err.message, callback);
+        } else {
+            // handle the RHE message
+            debugLog("RHE_message received!");
+            self._on_RHE_message(data, callback);
+        }
+    });
+
+};
+ClientWSS_transport.prototype._identifyServerByURI = function (uri) {
+    //not checked so far --> needs information/choice from client application level
+    return true;
+}
+
+ClientWSS_transport.prototype._identifyServerByURL = function (url) {
+    debugLog("url: ",url," epUrl: ",this.endpointUrl);
+    return url === this.endpointUrl;
+}
+
+ClientWSS_transport.prototype._on_RHE_message = function (data, callback) {
+
+    var self = this;
+
+    assert(data instanceof Buffer);
+    assert(!self._reversehelloreceived);
+
+    var stream = new BinaryStream(data);
+    var msgType = data.slice(0, 3).toString("ascii");
+
+    /* istanbul ignore next*/
+    debugLog("CLIENT received " + msgType.yellow);
+    debugLog("CLIENT received " + hexDump(data));
+    
+
+    if (msgType === "RHE") {
+
+        assert(data.length >= 24);
+
+        var reverseHelloMessage = decodeMessage(stream, ReverseHelloMessage);
+        assert(_.isFinite(self.protocolVersion));
+
+        // OPCUA Spec 1.04 part 6 - page 55
+        // The encoded value shall be less than 4 096 bytes. Client shall return a Bad_TcpEndpointUrlInvalid error 
+        // and close the connection if the length exceeds 4 096 or if it does not recognize the Server identified by the URI.
+        if (reverseHelloMessage.serverUri.length >= 4096) {
+            self._abortWithError(StatusCodes.BadTcpEndpointUrlInvalid, "RHE serverUri too long!", callback);
+        }
+        else if (!self._identifyServerByURI(reverseHelloMessage.serverUri)) {
+            self._abortWithError(StatusCodes.BadTcpEndpointUrlInvalid, "Client does not recognize Server specivied by RHE serverUri (ApplicationUri)", callback);
+        }
+        //Clients shall return a Bad_TcpEndpointUrlInvalid error and close the connection if the length exceeds 4 096 or 
+        //if it does not recognize the resource identified by the URL.
+        else if (reverseHelloMessage.endpointUrl.length >= 4096) {
+            self._abortWithError(StatusCodes.BadTcpEndpointUrlInvalid, "RHE endpointUrl too long!", callback);
+        }
+        else if (!self._identifyServerByURL(reverseHelloMessage.endpointUrl)) {
+            self._abortWithError(StatusCodes.BadTcpEndpointUrlInvalid, "Client does not recognize Server specivied by RHE endpointURL", callback);
+        } else {
+
+            // the helloMessage shall only be received once.
+            self._reversehelloreceived = true;
+
+            self._perform_HEL_ACK_transaction(callback);
+        }
+
+    } else {
+        // invalid packet , expecting HEL
+        debugLog("BadCommunicationError ".red, "Expecting 'RHE' message to initiate communication");
+        self._abortWithError(StatusCodes.BadCommunicationError, "Expecting 'RHE' message to initiate communication", callback);
+    }
+
+};
+
+ClientWSS_transport.prototype._abortWithError = function (statusCode, extraErrorDescription, callback) {
+
+    assert(statusCode instanceof StatusCode);
+    assert(_.isFunction(callback), "expecting a callback");
+
+    var self = this;
+
+    /* istanbul ignore else */
+    if (!self.__aborted) {
+        self.__aborted = 1;
+        // send the error message and close the connection
+        assert(StatusCodes.hasOwnProperty(statusCode.name));
+
+        debugLog(" Client aborting because ".red + statusCode.name.cyan);
+        debugLog(" extraErrorDescription   ".red + extraErrorDescription.cyan);
+        var errorResponse = new TCPErrorMessage({statusCode: statusCode, reason: statusCode.description});
+        var messageChunk = packTcpMessage("ERR", errorResponse);
+
+        self.write(messageChunk);
+        self.disconnect(function () {
+            self.__aborted = 2;
+            callback(new Error(extraErrorDescription + " StatusCode = " + statusCode.name));
+
+        });
+
+    } else {
+        callback(new Error(statusCode.name));
+    }
 };
 
 

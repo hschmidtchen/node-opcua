@@ -11,7 +11,7 @@ var readMessageHeader = require("node-opcua-chunkmanager").readMessageHeader;
 
 
 function is_valid_msg_type(msgType) {
-    assert(["HEL", "ACK", "ERR",   // Connection Layer
+    assert(["HEL", "RHE", "ACK", "ERR",   // Connection Layer
         "OPN", "MSG", "CLO"    // OPC Unified Architecture, Part 6 page 36
     ].indexOf(msgType) >= 0, "invalid message type  " + msgType);
     return true;
@@ -44,7 +44,7 @@ function decodeMessage(stream, ClassName) {
 function packTcpMessage(msgType, encodableObject) {
 
     assert(is_valid_msg_type(msgType));
-
+    
     var messageChunk = createFastUninitializedBuffer(encodableObject.binaryStoreSize() + 8);
     // encode encodeableObject in a packet
     var stream = new BinaryStream(messageChunk);

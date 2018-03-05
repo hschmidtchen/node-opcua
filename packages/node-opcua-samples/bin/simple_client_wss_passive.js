@@ -51,6 +51,7 @@ var argv = yargs(process.argv)
 
     .boolean("isPassive")
     .describe("isPassive"," indicates wether the client waits for the OPC UA Server to establish the transport connection")
+    .default("isPassive", true)
 
     .alias("e", "endpoint")
     .alias("s", "securityMode")
@@ -114,7 +115,7 @@ var serverCertificate = null;
 var path = require("path");
 var crypto_utils = opcua.crypto_utils;
 
-var isPassive = !!argv.isPassive;
+var isPassive = !!argv.isPassive || argv.isPassive==='undefined';
 
 function getBrowseName(session,nodeId,callback) {
     session.read({ nodeId: nodeId, attributeId: AttributeIds.BrowseName},function(err, dataValue) {

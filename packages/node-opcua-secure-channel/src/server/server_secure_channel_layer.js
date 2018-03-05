@@ -97,6 +97,7 @@ function ServerSecureChannelLayer(options) {
 
     self.serverNonce = null; // will be created when needed
 
+    self.isPassive = options.isPassive || false;
 
     options.objectFactory = options.objectFactory || require("node-opcua-factory");
     assert(_.isObject(options.objectFactory));
@@ -338,7 +339,7 @@ ServerSecureChannelLayer.prototype.init = function (socket, callback) {
             self.transport = new ServerTCP_transport();
         break;
         case "opc.wss":
-            self.transport = new ServerWSS_transport();
+            self.transport = new ServerWSS_transport(self.isPassive, self.parent);
         break;
         case "fake":
         case "http":
